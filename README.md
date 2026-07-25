@@ -1,4 +1,4 @@
-# Biz Manager POS 🌿
+# Biz Manager POS 
 
 > A modern, full-stack Point of Sale (POS) and PC management system built for cyber cafes. Powered by Jaba Planet (EST. 2022).
 
@@ -18,16 +18,16 @@ Biz Manager bridges a cloud-hosted web dashboard (Next.js) with a lightweight de
 
 ---
 
-## ✨ Features
+##  Features
 
-### 📡 The Front Desk (Host POS)
+###  The Front Desk (Host POS)
 * **Real-Time PC Control:** Start, pause, resume, and end customer sessions instantly.
 * **Flexible Billing:** Supports Post-paid (open tab) and Pre-paid (countdown) sessions.
 * **Smart Cart Integration:** Automatically calculates PC session costs alongside physical services.
 * **Live Analytics:** Tracks daily revenue, total sessions, and busiest rigs.
 * **Centralized Settings:** Update global billing rates (KES/min) on the fly.
 
-### 🔒 The Workstation (Client PC)
+###  The Workstation (Client PC)
 * **Automated Screen Locking:** Fullscreen lock prevents unauthorized access when a PC is available or paused.
 * **Draggable HUD:** Active sessions display a minimalist, draggable floating timer.
 * **Network Resilience:** Exponential backoff and timeout handling for spotty connections.
@@ -35,7 +35,7 @@ Biz Manager bridges a cloud-hosted web dashboard (Next.js) with a lightweight de
 
 ---
 
-## 🛠 Tech Stack
+##  Tech Stack
 
 **Frontend (Dashboard)**
 * [Next.js](https://nextjs.org/) (React)
@@ -52,7 +52,7 @@ Biz Manager bridges a cloud-hosted web dashboard (Next.js) with a lightweight de
 
 ---
 
-## 🚀 Getting Started
+##  Getting Started
 
 ### Prerequisites
 * Node.js installed (for the web dashboard)

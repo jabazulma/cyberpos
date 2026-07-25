@@ -1,15 +1,15 @@
 # cyberpos
 Biz Manager (by Jaba Planet) is a modern POS and PC management system for cyber cafes. It bridges a Next.js front-desk dashboard with a Python desktop client via Firebase. Features include real-time session control, automated PC lock screens, custom billing, and a minimalist draggable HUD timer for customers
 
-Biz Manager 🌿
+Biz Manager 
 Powered by Jaba Planet (EST. 2022)
 
 Biz Manager is a modern, full-stack Point of Sale (POS) and PC management system built specifically for cyber cafes, gaming lounges, and service-oriented workspaces.
 
 Instead of relying on clunky, outdated management software, Biz Manager bridges a sleek, cloud-hosted web dashboard with a lightweight desktop client. It seamlessly controls customer workstations, tracks time, and handles billing in real-time. Designed with a "Natural Minimalist" aesthetic, the system provides a calm, distraction-free interface for both the front desk and the end-users.
 
-✨ System Features
-📡 The Front Desk (Next.js POS Dashboard)
+ System Features
+The Front Desk (Next.js POS Dashboard)
 Real-Time PC Control: Start, pause, resume, and end customer sessions instantly across the local network or remotely.
 
 Flexible Billing Models:
@@ -35,7 +35,7 @@ Time-Warning Audio: Plays a soft, natural chime when a pre-paid session has 60 s
 
 Staff Override: Built-in hidden hotkey (F12) for staff to bypass the lock screen using a secure PIN.
 
-🛠️ Tech Stack
+Tech Stack
 Frontend & Dashboard:
 
 Next.js (React)
@@ -56,14 +56,14 @@ Tkinter (GUI)
 
 Firebase Admin SDK
 
-🏗️ Architecture Overview
+Architecture Overview
 The project is split into two halves that communicate entirely via Firestore:
 
 app/page.tsx (The Host): The control center run by the cafe attendant. When a session is started, it updates the specific PC's document in Firestore to status: 'Active'.
 
 lock.py (The Client): Runs as a background service on each customer computer. It continuously polls its specific document in Firestore. When it sees Active, it hides the lock screen. When the time runs out or the attendant clicks 'Pause', it instantly draws the lock screen back over the monitor.
 
-🚀 Getting Started
+Getting Started
 1. Setting up the Web POS
 Clone the repository.
 

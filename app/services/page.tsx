@@ -1,214 +1,83 @@
-'use client';
+"use client";
 
-import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
-import { auth, db } from '@/lib/firebase';
-import { collection, addDoc, deleteDoc, doc, onSnapshot, query, orderBy } from 'firebase/firestore';
-import { onAuthStateChanged, User } from 'firebase/auth';
+import { useState, useEffect } from "react";
+import { getAuth, onAuthStateChanged } from "firebase/auth";
+// import { db } from "../firebase"; // Adjust this path to your actual firebase config file
 
-interface ServiceItem {
-  id: string;
-  name: string;
-  price: number;
-  category: string;
-}
+export default function ServicesPage() {
+  const [businessName, setBusinessName] = useState("Loading...");
+  const [services, setServices] = useState([
+    { id: 1, name: "B&W Printing", price: 10, category: "Document" },
+    { id: 2, name: "Color Printing", price: 50, category: "Document" },
+    { id: 3, name: "Scanning", price: 20, category: "Document" },
+    { id: 4, name: "Lamination", price: 100, category: "Service" },
+    { id: 5, name: "Passport Photos", price: 150, category: "Photography" },
+    { id: 6, name: "Snack / Soda", price: 70, category: "Refreshment" },
+  ]);
 
-export default function ServicesManager() {
-  const router = useRouter();
-  const [user, setUser] = useState<User | null>(null);
-  const [services, setServices] = useState<ServiceItem[]>([]);
-  const [loading, setLoading] = useState(true);
-  
-  // Form State
-  const [serviceName, setServiceName] = useState('');
-  const [servicePrice, setServicePrice] = useState('');
-  const [serviceCategory, setServiceCategory] = useState('');
-  const [isAdding, setIsAdding] = useState(false);
-
-  // Authenticate and fetch services
   useEffect(() => {
-    const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
-      if (currentUser) {
-        setUser(currentUser);
-        
-        // Setup real-time listener for this specific user's services
-        const servicesRef = collection(db, 'users', currentUser.uid, 'services');
-        const q = query(servicesRef, orderBy('category', 'asc'), orderBy('name', 'asc'));
-        
-        const unsubscribeSnapshot = onSnapshot(q, (snapshot) => {
-          const fetchedServices = snapshot.docs.map(doc => ({
-            id: doc.id,
-            ...doc.data()
-          })) as ServiceItem[];
-          
-          setServices(fetchedServices);
-          setLoading(false);
-        });
-
-        return () => unsubscribeSnapshot();
+    const auth = getAuth();
+    // Listen for the logged-in user to grab the name they used during sign-up
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        // Uses the display name from sign up. If blank, falls back to a default.
+        setBusinessName(user.displayName || "Biz Manager Services");
       } else {
-        router.push('/login');
+        setBusinessName("Guest User");
       }
     });
 
-    return () => unsubscribeAuth();
-  }, [router]);
-
-  // Add a new service
-  const handleAddService = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!user || !serviceName || !servicePrice || !serviceCategory) return;
-
-    setIsAdding(true);
-    try {
-      const servicesRef = collection(db, 'users', user.uid, 'services');
-      await addDoc(servicesRef, {
-        name: serviceName,
-        price: Number(servicePrice),
-        category: serviceCategory,
-        createdAt: new Date().toISOString()
-      });
-      
-      setServiceName('');
-      setServicePrice('');
-      // We keep the category as is, in case the user wants to add multiple items to the same category back-to-back
-    } catch (error) {
-      console.error("Error adding service: ", error);
-      alert("Failed to add service.");
-    } finally {
-      setIsAdding(false);
-    }
-  };
-
-  // Delete a service
-  const handleDeleteService = async (serviceId: string) => {
-    if (!user) return;
-    const confirmDelete = window.confirm("Are you sure you want to delete this service?");
-    if (!confirmDelete) return;
-
-    try {
-      const serviceDocRef = doc(db, 'users', user.uid, 'services', serviceId);
-      await deleteDoc(serviceDocRef);
-    } catch (error) {
-      console.error("Error deleting service: ", error);
-      alert("Failed to delete service.");
-    }
-  };
-
-  if (loading) return <div className="min-h-screen flex items-center justify-center font-sans">Loading Services...</div>;
+    return () => unsubscribe();
+  }, []);
 
   return (
-    <div className="min-h-screen bg-gray-50 flex flex-col font-sans">
-      <header className="bg-blue-900 text-white p-4 flex justify-between items-center shadow-md">
-        <h1 className="text-2xl font-bold tracking-wider">Biz Manager</h1>
-        <div className="flex gap-4">
-          <button onClick={() => router.push('/')} className="hover:text-blue-200 transition">Back to POS</button>
-        </div>
+    <div className="min-h-screen bg-neutral-50 p-8 font-sans">
+      
+      {/* Header Section */}
+      <header className="mb-10">
+        <h1 className="text-4xl font-light text-neutral-800 tracking-tight">
+          {businessName}
+        </h1>
+        <p className="text-neutral-500 mt-2 text-sm uppercase tracking-widest font-medium">
+          Service & Inventory Management
+        </p>
       </header>
 
-      <main className="flex-1 max-w-5xl w-full mx-auto p-6 flex flex-col md:flex-row gap-6">
-        
-        {/* Left Column: Add Service Form */}
-        <div className="w-full md:w-1/3 bg-white p-6 rounded-xl shadow border border-gray-200 h-fit">
-          <h2 className="text-xl font-semibold mb-4 text-gray-800">Add New Service</h2>
-          <form onSubmit={handleAddService} className="space-y-4">
+      {/* Services Grid */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {services.map((service) => (
+          <div 
+            key={service.id} 
+            className="bg-white p-6 rounded-2xl border border-neutral-100 shadow-sm hover:shadow-md transition-shadow duration-200 flex flex-col justify-between"
+          >
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Category</label>
-              <input
-                type="text"
-                required
-                list="category-suggestions"
-                value={serviceCategory}
-                onChange={(e) => setServiceCategory(e.target.value)}
-                className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 outline-none"
-                placeholder="e.g., Government, Printing..."
-              />
-              {/* Datalist provides autocomplete suggestions based on existing entries */}
-              <datalist id="category-suggestions">
-                {Array.from(new Set(services.map(s => s.category))).map(cat => (
-                  <option key={cat} value={cat} />
-                ))}
-              </datalist>
+              <span className="text-xs font-semibold text-emerald-600 bg-emerald-50 px-3 py-1 rounded-full uppercase tracking-wide">
+                {service.category}
+              </span>
+              <h3 className="text-xl font-medium text-neutral-800 mt-4">
+                {service.name}
+              </h3>
             </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Service Name</label>
-              <input
-                type="text"
-                required
-                value={serviceName}
-                onChange={(e) => setServiceName(e.target.value)}
-                className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 outline-none"
-                placeholder="e.g., KRA PIN Registration"
-              />
+            
+            <div className="flex items-center justify-between mt-6 pt-4 border-t border-neutral-50">
+              <span className="text-2xl font-light text-neutral-900">
+                KES {service.price}
+              </span>
+              <button className="text-sm bg-neutral-900 text-white px-5 py-2 rounded-xl hover:bg-neutral-800 transition-colors">
+                Add to Cart
+              </button>
             </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Price (KES)</label>
-              <input
-                type="number"
-                required
-                min="0"
-                value={servicePrice}
-                onChange={(e) => setServicePrice(e.target.value)}
-                className="w-full p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 outline-none"
-                placeholder="e.g., 300"
-              />
-            </div>
-            <button
-              type="submit"
-              disabled={isAdding}
-              className={`w-full py-2 rounded-lg font-bold text-white transition ${
-                isAdding ? 'bg-blue-400' : 'bg-blue-600 hover:bg-blue-700'
-              }`}
-            >
-              {isAdding ? 'Adding...' : 'Save Service'}
-            </button>
-          </form>
-        </div>
+          </div>
+        ))}
 
-        {/* Right Column: List of Services */}
-        <div className="w-full md:w-2/3 bg-white p-6 rounded-xl shadow border border-gray-200">
-          <h2 className="text-xl font-semibold mb-4 text-gray-800">Your Services</h2>
-          
-          {services.length === 0 ? (
-            <div className="text-center py-10 text-gray-500 border-2 border-dashed border-gray-200 rounded">
-              No services added yet. Add your first service to get started.
-            </div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse">
-                <thead>
-                  <tr className="border-b-2 border-gray-200 text-gray-700">
-                    <th className="p-3 font-semibold">Category</th>
-                    <th className="p-3 font-semibold">Service Name</th>
-                    <th className="p-3 font-semibold text-right">Price (KES)</th>
-                    <th className="p-3 font-semibold text-center">Action</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {services.map((service) => (
-                    <tr key={service.id} className="border-b border-gray-100 hover:bg-gray-50 transition">
-                      <td className="p-3 text-gray-500 text-sm">
-                        <span className="bg-gray-100 px-2 py-1 rounded border border-gray-200">{service.category || 'Uncategorized'}</span>
-                      </td>
-                      <td className="p-3 text-gray-800 font-medium">{service.name}</td>
-                      <td className="p-3 text-right text-gray-600 font-semibold">{service.price}</td>
-                      <td className="p-3 text-center">
-                        <button 
-                          onClick={() => handleDeleteService(service.id)}
-                          className="text-red-500 hover:text-red-700 text-sm font-bold bg-red-50 px-3 py-1 rounded transition"
-                        >
-                          Delete
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-
-      </main>
+        {/* Add New Service Button Card */}
+        <button className="bg-transparent border-2 border-dashed border-neutral-200 p-6 rounded-2xl flex flex-col items-center justify-center text-neutral-400 hover:text-neutral-600 hover:border-neutral-300 hover:bg-neutral-100/50 transition-all min-h-[160px]">
+          <svg className="w-8 h-8 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+          </svg>
+          <span className="font-medium">Add New Service</span>
+        </button>
+      </div>
     </div>
   );
 }

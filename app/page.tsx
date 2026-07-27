@@ -461,22 +461,22 @@ export default function BizManagerPOS() {
       )}
 
       {/* HEADER */}
-      <header className="bg-white border-b border-stone-200 px-6 py-4 flex justify-between items-center print:hidden shadow-sm">
-        <div className="flex items-center gap-6">
+      <header className="bg-white border-b border-stone-200 px-4 sm:px-6 py-4 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 print:hidden shadow-sm">
+        <div className="flex flex-wrap items-center gap-3 sm:gap-6">
           <div>
-            <h1 className="text-2xl font-extrabold tracking-tight text-emerald-900">
+            <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight text-emerald-900">
               {businessProfile?.businessName || 'Biz Manager POS'}
             </h1>
             <p className="text-[10px] font-bold text-emerald-600/70 uppercase tracking-widest mt-0.5">EST. 2022</p>
           </div>
           <div className="hidden md:block h-8 w-px bg-stone-200"></div>
-          <div className="text-xs font-medium text-stone-500 flex gap-4">
+          <div className="text-xs font-medium text-stone-500 flex flex-wrap gap-3 sm:gap-4">
             <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500"></span> {activeCount} live</span>
             <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-500"></span> {pausedCount} paused</span>
             <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-stone-300"></span> {availableCount} free</span>
           </div>
         </div>
-        <div className="flex gap-5 items-center text-sm font-medium">
+        <div className="flex flex-wrap gap-3 sm:gap-5 items-center text-sm font-medium">
           <button onClick={() => router.push('/dashboard')} className="text-stone-500 hover:text-emerald-700 transition-colors">
             Dashboard
           </button>
@@ -493,14 +493,14 @@ export default function BizManagerPOS() {
           >
             Billing Rates
           </button>
-          <button onClick={handleLogout} className="text-rose-500 hover:text-rose-700 transition-colors ml-2 px-4 py-2 bg-rose-50 rounded-lg hover:bg-rose-100">
+          <button onClick={handleLogout} className="text-rose-500 hover:text-rose-700 transition-colors px-4 py-2 bg-rose-50 rounded-lg hover:bg-rose-100">
             Logout
           </button>
         </div>
       </header>
 
       {/* DAILY STATS STRIP */}
-      <div className="bg-white border-b border-stone-200 px-6 py-3 flex gap-8 text-sm print:hidden">
+      <div className="bg-white border-b border-stone-200 px-4 sm:px-6 py-3 flex flex-wrap gap-4 sm:gap-8 text-xs sm:text-sm print:hidden">
         <span className="text-stone-500">
           TODAY&apos;S REVENUE: <span className="font-bold text-emerald-700">KES {todayStats.revenue}</span>
         </span>
@@ -512,11 +512,11 @@ export default function BizManagerPOS() {
         </span>
       </div>
 
-      <main className="flex-1 flex p-6 gap-6 print:hidden max-w-[1600px] mx-auto w-full">
+      <main className="flex-1 flex flex-col lg:flex-row p-3 sm:p-6 gap-4 sm:gap-6 print:hidden max-w-[1600px] mx-auto w-full">
         
         {/* PC Management */}
         <section className="flex-1 flex flex-col">
-          <div className="flex justify-between items-end mb-6">
+          <div className="flex flex-wrap justify-between items-end gap-3 mb-6">
             <h2 className="text-xl font-bold text-stone-800 tracking-tight">Active Workstations</h2>
             <button
               onClick={handleAddPc}
@@ -531,7 +531,7 @@ export default function BizManagerPOS() {
               No workstations configured. Click "+ Add New PC" to get started.
             </div>
           ) : (
-            <div className="grid grid-cols-2 xl:grid-cols-3 gap-5">
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4 sm:gap-5">
               {pcs.map((pc) => {
                 const { timeString, currentCost, remainingSeconds, isPrepaid } = computeTiming(pc, tick, RATE, ALLOWANCE_SEC);
                 const runningLow = isPrepaid && pc.status === 'Active' && remainingSeconds <= LOW_TIME_WARNING_SECONDS;
@@ -601,7 +601,7 @@ export default function BizManagerPOS() {
         </section>
 
         {/* Quick Sale Cart */}
-        <aside className="w-[420px] bg-white rounded-3xl shadow-sm border border-stone-200 flex flex-col relative overflow-hidden">
+        <aside className="w-full lg:w-[420px] bg-white rounded-3xl shadow-sm border border-stone-200 flex flex-col relative overflow-hidden">
           <div className="p-6 pb-4 border-b border-stone-100 bg-stone-50/50">
              <h2 className="text-lg font-bold text-stone-800 tracking-tight mb-4">Current Bill</h2>
              <div className="relative">
@@ -644,17 +644,17 @@ export default function BizManagerPOS() {
               </div>
             ) : (
               cart.map((item) => (
-                <div key={item.id} className="flex justify-between items-center p-3 rounded-xl border border-stone-100 bg-stone-50 group hover:border-stone-200 transition-colors">
-                  <div className="flex-1">
+                <div key={item.id} className="flex flex-wrap sm:flex-nowrap justify-between items-center gap-2 p-3 rounded-xl border border-stone-100 bg-stone-50 group hover:border-stone-200 transition-colors">
+                  <div className="flex-1 min-w-[120px]">
                     <span className="block font-bold text-stone-800 text-sm">{item.name}</span>
                     <span className="text-[11px] font-medium text-stone-500">KES {item.price} each</span>
                   </div>
-                  <div className="flex items-center gap-1 mr-4 bg-white border border-stone-200 rounded-lg p-0.5 shadow-sm">
+                  <div className="flex items-center gap-1 bg-white border border-stone-200 rounded-lg p-0.5 shadow-sm shrink-0">
                     <button onClick={() => updateQuantity(item.id, -1)} className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-stone-100 text-stone-600 font-medium transition">-</button>
                     <span className="w-6 text-center font-bold text-sm text-stone-800">{item.qty}</span>
                     <button onClick={() => updateQuantity(item.id, 1)} className="w-7 h-7 flex items-center justify-center rounded-md hover:bg-stone-100 text-stone-600 font-medium transition">+</button>
                   </div>
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-3 shrink-0">
                     <span className="font-bold w-16 text-right text-sm text-stone-800">KES {item.price * item.qty}</span>
                     <button onClick={() => removeFromCart(item.id)} className="w-7 h-7 flex items-center justify-center rounded-full text-stone-300 hover:text-rose-500 hover:bg-rose-50 transition-colors">
                       <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
@@ -686,7 +686,7 @@ export default function BizManagerPOS() {
       {/* START SESSION MODAL */}
       {selectedPcForStart && (
         <div className="fixed inset-0 bg-stone-900/40 backdrop-blur-sm flex items-center justify-center z-50 print:hidden p-4">
-          <div className="bg-white p-8 rounded-3xl shadow-2xl w-[400px] max-w-full border border-stone-100">
+          <div className="bg-white p-6 sm:p-8 rounded-3xl shadow-2xl w-[400px] max-w-full border border-stone-100">
             <h2 className="text-xl font-extrabold mb-6 text-stone-800 tracking-tight">Start {selectedPcForStart.name}</h2>
 
             <div className="mb-4 p-5 border border-stone-200 rounded-2xl bg-stone-50 hover:border-emerald-200 transition-colors">
@@ -736,7 +736,7 @@ export default function BizManagerPOS() {
       {/* CONFIRM END SESSION MODAL */}
       {pcPendingEnd && (
         <div className="fixed inset-0 bg-stone-900/40 backdrop-blur-sm flex items-center justify-center z-50 print:hidden p-4">
-          <div className="bg-white border border-stone-100 p-8 rounded-3xl shadow-2xl w-[400px] max-w-full text-center">
+          <div className="bg-white border border-stone-100 p-6 sm:p-8 rounded-3xl shadow-2xl w-[400px] max-w-full text-center">
             <div className="w-16 h-16 bg-rose-100 rounded-full flex items-center justify-center mx-auto mb-4">
                <svg className="w-8 h-8 text-rose-600" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
             </div>
@@ -759,7 +759,7 @@ export default function BizManagerPOS() {
       {/* SETTINGS MODAL */}
       {showSettings && (
         <div className="fixed inset-0 bg-stone-900/40 backdrop-blur-sm flex items-center justify-center z-50 print:hidden p-4">
-          <div className="bg-white border border-stone-100 p-8 rounded-3xl shadow-2xl w-[400px] max-w-full">
+          <div className="bg-white border border-stone-100 p-6 sm:p-8 rounded-3xl shadow-2xl w-[400px] max-w-full">
             <h2 className="text-xl font-extrabold mb-1 text-stone-800 tracking-tight">Billing Settings</h2>
             <p className="text-sm text-stone-500 mb-6 font-medium">Update the base rates for all workstations.</p>
 
@@ -793,8 +793,8 @@ export default function BizManagerPOS() {
 
       {/* RECEIPT MODAL */}
       {showReceipt && (
-        <div className="fixed inset-0 bg-stone-900/40 backdrop-blur-sm flex items-center justify-center z-50 print:bg-transparent print:relative print:flex-col print:items-start print:justify-start">
-          <div className="bg-white text-black p-8 rounded-3xl shadow-2xl w-[400px] max-w-full print:shadow-none print:w-[80mm] print:p-0 print:m-0 border border-stone-100">
+        <div className="fixed inset-0 bg-stone-900/40 backdrop-blur-sm flex items-center justify-center z-50 p-4 print:bg-transparent print:relative print:flex-col print:items-start print:justify-start print:p-0">
+          <div className="bg-white text-black p-6 sm:p-8 rounded-3xl shadow-2xl w-[400px] max-w-full print:shadow-none print:w-[80mm] print:p-0 print:m-0 border border-stone-100">
             <div className="text-center mb-6 font-mono">
               <h2 className="text-2xl font-bold uppercase mb-1">{businessProfile?.businessName || 'Biz Manager'}</h2>
               <p className="text-sm text-stone-600">{businessProfile?.address}</p>

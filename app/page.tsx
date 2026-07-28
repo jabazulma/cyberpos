@@ -181,6 +181,7 @@ export default function BizManagerPOS() {
   const [powerModalPc, setPowerModalPc] = useState<Pc | null>(null);
   const [powerAction, setPowerAction] = useState<PowerAction | null>(null);
   const [previewPcId, setPreviewPcId] = useState<number | null>(null);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const autoEndedRef = useRef<Set<number>>(new Set());
   const beepedPcsRef = useRef<Set<number>>(new Set());
@@ -534,16 +535,16 @@ export default function BizManagerPOS() {
       )}
 
       {/* HEADER */}
-      <header className="bg-white border-b border-stone-200 px-4 sm:px-6 py-4 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3 print:hidden shadow-sm">
-        <div className="flex flex-wrap items-center gap-3 sm:gap-6">
-          <div>
-            <h1 className="text-xl sm:text-2xl font-extrabold tracking-tight text-emerald-900">
+      <header className="relative bg-white border-b border-stone-200 px-4 sm:px-6 py-3 sm:py-4 flex justify-between items-center gap-3 print:hidden shadow-sm">
+        <div className="flex flex-wrap items-center gap-3 sm:gap-6 min-w-0">
+          <div className="min-w-0">
+            <h1 className="text-lg sm:text-2xl font-extrabold tracking-tight text-emerald-900 truncate">
               {businessProfile?.businessName || 'Biz Manager POS'}
             </h1>
-            <p className="text-[10px] font-bold text-emerald-600/70 uppercase tracking-widest mt-0.5">EST. 2022</p>
+            <p className="hidden sm:block text-[10px] font-bold text-emerald-600/70 uppercase tracking-widest mt-0.5">EST. 2022</p>
           </div>
           <div className="hidden md:block h-8 w-px bg-stone-200"></div>
-          <div className="text-xs font-medium text-stone-500 flex flex-wrap gap-3 sm:gap-4">
+          <div className="text-[11px] sm:text-xs font-medium text-stone-500 flex flex-wrap gap-2.5 sm:gap-4">
             <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500"></span> {activeCount} live</span>
             <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-500"></span> {pausedCount} paused</span>
             <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-stone-300"></span> {availableCount} free</span>
@@ -552,7 +553,9 @@ export default function BizManagerPOS() {
             )}
           </div>
         </div>
-        <div className="flex flex-wrap gap-3 sm:gap-5 items-center text-sm font-medium">
+
+        {/* Full nav — larger screens only */}
+        <div className="hidden sm:flex gap-5 items-center text-sm font-medium shrink-0">
           <button onClick={() => router.push('/dashboard')} className="text-stone-500 hover:text-emerald-700 transition-colors">
             Dashboard
           </button>
@@ -573,6 +576,61 @@ export default function BizManagerPOS() {
             Logout
           </button>
         </div>
+
+        {/* Compact overflow menu — mobile only */}
+        <div className="sm:hidden shrink-0">
+          <button
+            onClick={() => setMobileMenuOpen((v) => !v)}
+            className="w-9 h-9 flex items-center justify-center rounded-lg border border-stone-200 text-stone-500 hover:bg-stone-50"
+            aria-label="Menu"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 6h16M4 12h16M4 18h16"></path></svg>
+          </button>
+
+          {mobileMenuOpen && (
+            <div className="absolute right-4 top-full mt-1 w-48 bg-white border border-stone-200 rounded-xl shadow-lg py-1.5 z-50">
+              <button
+                onClick={() => {
+                  setMobileMenuOpen(false);
+                  router.push('/dashboard');
+                }}
+                className="w-full text-left px-4 py-2.5 text-sm font-medium text-stone-600 hover:bg-stone-50"
+              >
+                Dashboard
+              </button>
+              <button
+                onClick={() => {
+                  setMobileMenuOpen(false);
+                  router.push('/services');
+                }}
+                className="w-full text-left px-4 py-2.5 text-sm font-medium text-stone-600 hover:bg-stone-50"
+              >
+                Services
+              </button>
+              <button
+                onClick={() => {
+                  setMobileMenuOpen(false);
+                  setRateDraft(String(RATE));
+                  setAllowanceDraft(String(ALLOWANCE_SEC / 60));
+                  setShowSettings(true);
+                }}
+                className="w-full text-left px-4 py-2.5 text-sm font-medium text-stone-600 hover:bg-stone-50"
+              >
+                Billing Rates
+              </button>
+              <div className="my-1 border-t border-stone-100"></div>
+              <button
+                onClick={() => {
+                  setMobileMenuOpen(false);
+                  handleLogout();
+                }}
+                className="w-full text-left px-4 py-2.5 text-sm font-medium text-rose-600 hover:bg-rose-50"
+              >
+                Logout
+              </button>
+            </div>
+          )}
+        </div>
       </header>
 
       {/* DAILY STATS STRIP */}
@@ -592,7 +650,7 @@ export default function BizManagerPOS() {
         
         {/* PC Management */}
         <section className="flex-1 flex flex-col">
-          <div className="flex flex-wrap justify-between items-end gap-3 mb-6">
+          <div className="flex flex-wrap justify-between items-end gap-3 mb-4 sm:mb-6">
             <h2 className="text-xl font-bold text-stone-800 tracking-tight">Active Workstations</h2>
             <button
               onClick={handleAddPc}
@@ -624,8 +682,12 @@ export default function BizManagerPOS() {
                     <div className="flex justify-between items-center mb-2 gap-2">
                       <span className="font-bold text-lg text-stone-800 tracking-tight">{pc.name}</span>
                       <div className="flex items-center gap-1.5 shrink-0">
-                        <span className={`text-[10px] uppercase font-bold tracking-wider px-2.5 py-1 rounded-full ${runningLow ? 'bg-rose-100 text-rose-700' : style.badge}`}>
-                          {runningLow ? 'Time low' : pc.status}
+                        <span
+                          className={`text-[10px] uppercase font-bold tracking-wider px-2.5 py-1 rounded-full ${
+                            !online ? 'bg-rose-100 text-rose-700' : runningLow ? 'bg-rose-100 text-rose-700' : style.badge
+                          }`}
+                        >
+                          {!online ? 'Offline' : runningLow ? 'Time low' : pc.status}
                         </span>
                         <button
                           onClick={() => {
@@ -640,10 +702,10 @@ export default function BizManagerPOS() {
                       </div>
                     </div>
 
-                    {!online && (
+                    {!online && pc.sessionType && (
                       <div className="mb-2 text-[10px] font-bold text-rose-600 bg-rose-50 border border-rose-100 rounded-lg px-2.5 py-1.5 flex items-center gap-1.5">
                         <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse shrink-0"></span>
-                        SCRIPT OFFLINE — not enforcing timers or locking
+                        Was mid-session when it dropped — go check on this PC
                       </div>
                     )}
 

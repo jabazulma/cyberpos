@@ -12,12 +12,16 @@ import { collection, onSnapshot, doc, getDoc, addDoc, setDoc, query, orderBy, li
 const DEFAULT_RATE_KES_PER_MINUTE = 2;
 const DEFAULT_FREE_ALLOWANCE_MINUTES = 5;
 const LOW_TIME_WARNING_SECONDS = 60;
+// A PC counts as offline once its last heartbeat is older than this —
+// a few missed check-ins, not just one slow tick, to avoid false alarms.
+const OFFLINE_THRESHOLD_MS = 15000;
 
 // ============================================================
 // TYPES
 // ============================================================
 type SessionType = 'postpaid' | 'prepaid' | null;
 type PcStatus = 'Available' | 'Active' | 'Paused';
+type PowerAction = 'shutdown' | 'restart' | 'logoff';
 
 interface Service {
   id: string;
@@ -25,6 +29,10 @@ interface Service {
   price: number;
   category?: string;
 }
+
+// Firestore's client SDK returns a Timestamp object (with .toMillis()),
+// but freshly-added PCs won't have one yet — this covers both.
+type FirestoreTimestampLike = { toMillis?: () => number; seconds?: number } | null | undefined;
 
 interface Pc {
   id: number;
@@ -35,6 +43,10 @@ interface Pc {
   prepaidAmount: number;
   pausedAt: number | null;
   totalPausedTime: number;
+  lastHeartbeat?: FirestoreTimestampLike;
+  pendingCommand?: PowerAction | null;
+  pendingCommandIssuedAt?: number | null;
+  screenshotB64?: string | null;
 }
 
 interface BusinessProfile {
@@ -71,6 +83,18 @@ const formatTime = (totalSeconds: number) => {
 };
 
 const extractPcName = (itemName: string) => itemName.replace(/ \(Pre-paid\)$/, '').replace(/ Session$/, '');
+
+const timestampToMillis = (ts: FirestoreTimestampLike): number | null => {
+  if (!ts) return null;
+  if (typeof ts.toMillis === 'function') return ts.toMillis();
+  if (typeof ts.seconds === 'number') return ts.seconds * 1000;
+  return null;
+};
+
+const isPcOnline = (pc: Pc, now: number) => {
+  const lastMs = timestampToMillis(pc.lastHeartbeat);
+  return lastMs !== null && now - lastMs < OFFLINE_THRESHOLD_MS;
+};
 
 const computeTiming = (pc: Pc, now: number, rate: number, allowanceSec: number) => {
   let activeMs = 0;
@@ -152,9 +176,15 @@ export default function BizManagerPOS() {
   const [showSettings, setShowSettings] = useState(false);
   const [rateDraft, setRateDraft] = useState('');
   const [allowanceDraft, setAllowanceDraft] = useState('');
+  const [pcPendingTopUp, setPcPendingTopUp] = useState<Pc | null>(null);
+  const [topUpAmount, setTopUpAmount] = useState('');
+  const [powerModalPc, setPowerModalPc] = useState<Pc | null>(null);
+  const [powerAction, setPowerAction] = useState<PowerAction | null>(null);
+  const [previewPcId, setPreviewPcId] = useState<number | null>(null);
 
   const autoEndedRef = useRef<Set<number>>(new Set());
   const beepedPcsRef = useRef<Set<number>>(new Set());
+  const offlinePcsRef = useRef<Set<number>>(new Set());
 
   const RATE = businessProfile?.rateKesPerMinute ?? DEFAULT_RATE_KES_PER_MINUTE;
   const ALLOWANCE_SEC = (businessProfile?.freeAllowanceMinutes ?? DEFAULT_FREE_ALLOWANCE_MINUTES) * 60;
@@ -228,6 +258,20 @@ export default function BizManagerPOS() {
       setTick(now);
 
       pcs.forEach((pc) => {
+        // Offline check runs for every PC, regardless of session state —
+        // a PC can say "Active" in Firestore while its lock script has
+        // actually crashed, so this is a separate signal from status.
+        const online = isPcOnline(pc, now);
+        if (!online) {
+          if (!offlinePcsRef.current.has(pc.id)) {
+            offlinePcsRef.current.add(pc.id);
+            playBeep(320, 260);
+            notify(`${pc.name} has gone offline — its lock screen isn't checking in.`, 'error');
+          }
+        } else {
+          offlinePcsRef.current.delete(pc.id);
+        }
+
         if (pc.status === 'Available' || pc.sessionType !== 'prepaid') return;
         const { remainingSeconds } = computeTiming(pc, now, RATE, ALLOWANCE_SEC);
 
@@ -352,6 +396,33 @@ export default function BizManagerPOS() {
     setPcPendingEnd(null);
   };
 
+  const topUpSession = async (pc: Pc, amount: number) => {
+    if (!user || !amount || amount <= 0) return;
+    try {
+      addToCart({ id: `pc-${pc.id}-topup-${Date.now()}`, name: `${pc.name} Top-up`, price: amount });
+      await setDoc(doc(db, 'users', user.uid, 'pcs', pc.id.toString()), { prepaidAmount: (pc.prepaidAmount || 0) + amount }, { merge: true });
+      notify(`Added KES ${amount} to ${pc.name}.`, 'success');
+      setPcPendingTopUp(null);
+      setTopUpAmount('');
+    } catch (err) {
+      console.error('Failed to top up session', err);
+      notify(`Couldn't add time to ${pc.name}.`);
+    }
+  };
+
+  const sendPowerCommand = async (pc: Pc, action: PowerAction) => {
+    if (!user) return;
+    try {
+      await setDoc(doc(db, 'users', user.uid, 'pcs', pc.id.toString()), { pendingCommand: action, pendingCommandIssuedAt: Date.now() }, { merge: true });
+      notify(`Sent ${action} to ${pc.name} — it'll run next time the PC checks in.`, 'success');
+      setPowerModalPc(null);
+      setPowerAction(null);
+    } catch (err) {
+      console.error('Failed to send power command', err);
+      notify(`Couldn't reach ${pc.name} to send the command.`);
+    }
+  };
+
   const handleAddPc = async () => {
     if (!user) return;
     try {
@@ -432,6 +503,8 @@ export default function BizManagerPOS() {
   const activeCount = pcs.filter((p) => p.status === 'Active').length;
   const pausedCount = pcs.filter((p) => p.status === 'Paused').length;
   const availableCount = pcs.filter((p) => p.status === 'Available').length;
+  const offlineCount = pcs.filter((p) => !isPcOnline(p, tick)).length;
+  const previewPc = pcs.find((p) => p.id === previewPcId) || null;
 
   if (loading) {
     return (
@@ -474,6 +547,9 @@ export default function BizManagerPOS() {
             <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-emerald-500"></span> {activeCount} live</span>
             <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-amber-500"></span> {pausedCount} paused</span>
             <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-stone-300"></span> {availableCount} free</span>
+            {offlineCount > 0 && (
+              <span className="flex items-center gap-1 text-rose-600 font-semibold"><span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse"></span> {offlineCount} offline</span>
+            )}
           </div>
         </div>
         <div className="flex flex-wrap gap-3 sm:gap-5 items-center text-sm font-medium">
@@ -536,20 +612,57 @@ export default function BizManagerPOS() {
                 const { timeString, currentCost, remainingSeconds, isPrepaid } = computeTiming(pc, tick, RATE, ALLOWANCE_SEC);
                 const runningLow = isPrepaid && pc.status === 'Active' && remainingSeconds <= LOW_TIME_WARNING_SECONDS;
                 const style = statusStyles[pc.status];
+                const online = isPcOnline(pc, tick);
 
                 return (
                   <div
                     key={pc.id}
                     className={`p-5 rounded-2xl border transition-all duration-300 shadow-sm flex flex-col justify-between min-h-[160px] ${style.bg} ${style.border} ${
                       runningLow ? 'border-rose-400 bg-rose-50 shadow-rose-100' : ''
-                    }`}
+                    } ${!online ? 'opacity-70' : ''}`}
                   >
-                    <div className="flex justify-between items-center mb-2">
+                    <div className="flex justify-between items-center mb-2 gap-2">
                       <span className="font-bold text-lg text-stone-800 tracking-tight">{pc.name}</span>
-                      <span className={`text-[10px] uppercase font-bold tracking-wider px-2.5 py-1 rounded-full ${runningLow ? 'bg-rose-100 text-rose-700' : style.badge}`}>
-                        {runningLow ? 'Time low' : pc.status}
-                      </span>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <span className={`text-[10px] uppercase font-bold tracking-wider px-2.5 py-1 rounded-full ${runningLow ? 'bg-rose-100 text-rose-700' : style.badge}`}>
+                          {runningLow ? 'Time low' : pc.status}
+                        </span>
+                        <button
+                          onClick={() => {
+                            setPowerModalPc(pc);
+                            setPowerAction(null);
+                          }}
+                          title="Power options"
+                          className="w-7 h-7 flex items-center justify-center rounded-full text-stone-400 hover:text-stone-700 hover:bg-stone-100 transition"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M5.636 5.636a9 9 0 1012.728 0M12 3v9"></path></svg>
+                        </button>
+                      </div>
                     </div>
+
+                    {!online && (
+                      <div className="mb-2 text-[10px] font-bold text-rose-600 bg-rose-50 border border-rose-100 rounded-lg px-2.5 py-1.5 flex items-center gap-1.5">
+                        <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse shrink-0"></span>
+                        SCRIPT OFFLINE — not enforcing timers or locking
+                      </div>
+                    )}
+
+                    {pc.pendingCommand && (
+                      <div className="mb-2 text-[10px] font-bold text-amber-600 bg-amber-50 border border-amber-100 rounded-lg px-2.5 py-1.5">
+                        Sending {pc.pendingCommand}… waiting for PC to check in
+                      </div>
+                    )}
+
+                    {pc.status === 'Active' && pc.screenshotB64 && (
+                      <button
+                        onClick={() => setPreviewPcId(pc.id)}
+                        className="mb-3 block w-full rounded-lg overflow-hidden border border-stone-200 hover:border-emerald-300 transition"
+                        title="View live preview"
+                      >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={`data:image/jpeg;base64,${pc.screenshotB64}`} alt={`${pc.name} screen preview`} className="w-full h-24 object-cover" />
+                      </button>
+                    )}
 
                     <div className="text-center my-4">
                       <div className="text-[10px] font-bold text-stone-400 uppercase tracking-widest mb-1">
@@ -574,7 +687,16 @@ export default function BizManagerPOS() {
                           Start Session
                         </button>
                       ) : (
-                        <div className="flex gap-2">
+                        <div className="flex gap-2 flex-wrap justify-end">
+                          {isPrepaid && (
+                            <button
+                              onClick={() => setPcPendingTopUp(pc)}
+                              className="text-xs bg-white border border-emerald-200 text-emerald-700 hover:bg-emerald-50 px-3 py-2 rounded-xl font-bold transition shadow-sm"
+                              title="Add more time"
+                            >
+                              +Time
+                            </button>
+                          )}
                           {pc.status === 'Active' ? (
                             <button onClick={() => pauseSession(pc)} className="text-xs bg-white border border-amber-200 text-amber-700 hover:bg-amber-50 px-4 py-2 rounded-xl font-bold transition shadow-sm">
                               Pause
@@ -752,6 +874,107 @@ export default function BizManagerPOS() {
                 End Session
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* TOP UP MODAL */}
+      {pcPendingTopUp && (
+        <div className="fixed inset-0 bg-stone-900/40 backdrop-blur-sm flex items-center justify-center z-50 print:hidden p-4">
+          <div className="bg-white p-6 sm:p-8 rounded-3xl shadow-2xl w-[380px] max-w-full border border-stone-100">
+            <h2 className="text-xl font-extrabold mb-1 text-stone-800 tracking-tight">Add Time — {pcPendingTopUp.name}</h2>
+            <p className="text-sm text-stone-500 mb-6 font-medium leading-relaxed">Tops up the running session without ending it or resetting the clock.</p>
+            <input
+              type="number"
+              placeholder="Amount (KES)"
+              value={topUpAmount}
+              onChange={(e) => setTopUpAmount(e.target.value)}
+              className="w-full mb-6 bg-white border border-stone-200 p-3 rounded-xl focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 outline-none font-bold text-stone-800 shadow-sm"
+            />
+            <div className="flex gap-3">
+              <button
+                onClick={() => {
+                  setPcPendingTopUp(null);
+                  setTopUpAmount('');
+                }}
+                className="flex-1 bg-stone-100 py-3 rounded-xl font-bold hover:bg-stone-200 text-stone-700 transition"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => topUpSession(pcPendingTopUp, Number(topUpAmount))}
+                disabled={!topUpAmount || Number(topUpAmount) <= 0}
+                className="flex-1 bg-emerald-600 text-white py-3 rounded-xl font-bold hover:bg-emerald-700 disabled:opacity-50 shadow-sm transition"
+              >
+                Add Time
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* POWER CONTROL MODAL */}
+      {powerModalPc && (
+        <div className="fixed inset-0 bg-stone-900/40 backdrop-blur-sm flex items-center justify-center z-50 print:hidden p-4">
+          <div className="bg-white p-6 sm:p-8 rounded-3xl shadow-2xl w-[380px] max-w-full border border-stone-100">
+            {!powerAction ? (
+              <>
+                <h2 className="text-xl font-extrabold mb-1 text-stone-800 tracking-tight">Power — {powerModalPc.name}</h2>
+                <p className="text-sm text-stone-500 mb-6 font-medium leading-relaxed">Sends a command that runs the next time this PC checks in.</p>
+                <div className="space-y-2">
+                  <button onClick={() => setPowerAction('logoff')} className="w-full text-left px-4 py-3 rounded-xl border border-stone-200 hover:bg-stone-50 font-semibold text-stone-700 transition">
+                    Log off current user
+                  </button>
+                  <button onClick={() => setPowerAction('restart')} className="w-full text-left px-4 py-3 rounded-xl border border-amber-200 hover:bg-amber-50 font-semibold text-amber-700 transition">
+                    Restart
+                  </button>
+                  <button onClick={() => setPowerAction('shutdown')} className="w-full text-left px-4 py-3 rounded-xl border border-rose-200 hover:bg-rose-50 font-semibold text-rose-700 transition">
+                    Shut down
+                  </button>
+                </div>
+                <button
+                  onClick={() => {
+                    setPowerModalPc(null);
+                    setPowerAction(null);
+                  }}
+                  className="mt-6 w-full py-3 rounded-xl font-bold text-stone-500 hover:bg-stone-100 transition"
+                >
+                  Cancel
+                </button>
+              </>
+            ) : (
+              <>
+                <h2 className="text-xl font-extrabold mb-2 text-stone-800 tracking-tight capitalize">Confirm {powerAction}</h2>
+                <p className="text-sm text-stone-500 mb-8 font-medium leading-relaxed">
+                  This will {powerAction === 'shutdown' ? 'shut down' : powerAction === 'restart' ? 'restart' : 'log off'} {powerModalPc.name} as soon as it checks in. Anything unsaved there closes first.
+                </p>
+                <div className="flex gap-3">
+                  <button onClick={() => setPowerAction(null)} className="flex-1 bg-stone-100 py-3 rounded-xl font-bold hover:bg-stone-200 text-stone-700 transition">
+                    Back
+                  </button>
+                  <button onClick={() => sendPowerCommand(powerModalPc, powerAction)} className="flex-1 bg-rose-600 hover:bg-rose-700 text-white py-3 rounded-xl font-bold shadow-sm transition">
+                    Confirm
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* SCREEN PREVIEW MODAL */}
+      {previewPc && previewPc.screenshotB64 && (
+        <div className="fixed inset-0 bg-stone-900/60 backdrop-blur-sm flex items-center justify-center z-50 print:hidden p-4" onClick={() => setPreviewPcId(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl max-w-2xl w-full overflow-hidden border border-stone-200" onClick={(e) => e.stopPropagation()}>
+            <div className="flex justify-between items-center px-5 py-3 border-b border-stone-100">
+              <h3 className="font-bold text-stone-800">{previewPc.name} — live preview</h3>
+              <button onClick={() => setPreviewPcId(null)} className="text-stone-400 hover:text-stone-700 w-7 h-7 flex items-center justify-center rounded-full hover:bg-stone-100">
+                ✕
+              </button>
+            </div>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={`data:image/jpeg;base64,${previewPc.screenshotB64}`} alt={`${previewPc.name} live screen preview`} className="w-full" />
+            <div className="px-5 py-3 text-xs text-stone-400 border-t border-stone-100">Thumbnail refreshes every few seconds — not real-time video.</div>
           </div>
         </div>
       )}

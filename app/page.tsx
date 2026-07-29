@@ -15,6 +15,10 @@ const LOW_TIME_WARNING_SECONDS = 60;
 // A PC counts as offline once its last heartbeat is older than this —
 // a few missed check-ins, not just one slow tick, to avoid false alarms.
 const OFFLINE_THRESHOLD_MS = 15000;
+// A self-service request from an idle screen auto-clears if nobody at
+// the counter approves it within this window — the customer likely
+// walked off.
+const REQUEST_TIMEOUT_MS = 3 * 60 * 1000;
 
 // ============================================================
 // TYPES
@@ -47,6 +51,8 @@ interface Pc {
   pendingCommand?: PowerAction | null;
   pendingCommandIssuedAt?: number | null;
   screenshotB64?: string | null;
+  sessionRequest?: SessionType;
+  sessionRequestAt?: FirestoreTimestampLike;
 }
 
 interface BusinessProfile {
@@ -186,6 +192,7 @@ export default function BizManagerPOS() {
   const autoEndedRef = useRef<Set<number>>(new Set());
   const beepedPcsRef = useRef<Set<number>>(new Set());
   const offlinePcsRef = useRef<Set<number>>(new Set());
+  const requestClearedRef = useRef<Set<number>>(new Set());
 
   const RATE = businessProfile?.rateKesPerMinute ?? DEFAULT_RATE_KES_PER_MINUTE;
   const ALLOWANCE_SEC = (businessProfile?.freeAllowanceMinutes ?? DEFAULT_FREE_ALLOWANCE_MINUTES) * 60;
@@ -267,10 +274,32 @@ export default function BizManagerPOS() {
           if (!offlinePcsRef.current.has(pc.id)) {
             offlinePcsRef.current.add(pc.id);
             playBeep(320, 260);
-            notify(`${pc.name} has gone offline — its lock screen isn't checking in.`, 'error');
+            if (pc.status === 'Active' && user) {
+              // Nothing is enforcing the timer or lock screen on that
+              // machine right now — freeze billing instead of letting
+              // it silently keep running.
+              pauseSession(pc);
+              notify(`${pc.name} went offline mid-session — paused automatically. Resume once it reconnects.`, 'error');
+            } else {
+              notify(`${pc.name} has gone offline — its lock screen isn't checking in.`, 'error');
+            }
           }
         } else {
           offlinePcsRef.current.delete(pc.id);
+        }
+
+        // A customer's self-service request auto-clears if it sits
+        // unapproved too long — they probably walked off.
+        if (pc.sessionRequest && user) {
+          const requestMs = timestampToMillis(pc.sessionRequestAt);
+          if (requestMs !== null && now - requestMs > REQUEST_TIMEOUT_MS) {
+            if (!requestClearedRef.current.has(pc.id)) {
+              requestClearedRef.current.add(pc.id);
+              setDoc(doc(db, 'users', user.uid, 'pcs', pc.id.toString()), { sessionRequest: null, sessionRequestAt: null }, { merge: true })
+                .catch(() => {})
+                .finally(() => requestClearedRef.current.delete(pc.id));
+            }
+          }
         }
 
         if (pc.status === 'Available' || pc.sessionType !== 'prepaid') return;
@@ -331,13 +360,26 @@ export default function BizManagerPOS() {
 
   const startSession = async (pc: Pc, type: 'postpaid' | 'prepaid', amount: number = 0) => {
     if (!user) return;
+    if (!isPcOnline(pc, Date.now())) {
+      notify(`${pc.name} is offline — can't start a session until it reconnects.`);
+      return;
+    }
     try {
       const pcRef = doc(db, 'users', user.uid, 'pcs', pc.id.toString());
       if (type === 'prepaid') addToCart({ id: `pc-${pc.id}-${Date.now()}`, name: `${pc.name} (Pre-paid)`, price: amount });
 
       await setDoc(
         pcRef,
-        { status: 'Active', sessionType: type, sessionStart: Date.now(), prepaidAmount: amount, pausedAt: null, totalPausedTime: 0 },
+        {
+          status: 'Active',
+          sessionType: type,
+          sessionStart: Date.now(),
+          prepaidAmount: amount,
+          pausedAt: null,
+          totalPausedTime: 0,
+          sessionRequest: null,
+          sessionRequestAt: null,
+        },
         { merge: true }
       );
       notify(`${pc.name} is live.`, 'success');
@@ -346,6 +388,16 @@ export default function BizManagerPOS() {
     } catch (err) {
       console.error('Failed to start session', err);
       notify(`Couldn't fire up ${pc.name} — check the connection and try again.`);
+    }
+  };
+
+  const dismissRequest = async (pc: Pc) => {
+    if (!user) return;
+    try {
+      await setDoc(doc(db, 'users', user.uid, 'pcs', pc.id.toString()), { sessionRequest: null, sessionRequestAt: null }, { merge: true });
+    } catch (err) {
+      console.error('Failed to dismiss request', err);
+      notify(`Couldn't dismiss the request on ${pc.name}.`);
     }
   };
 
@@ -505,7 +557,9 @@ export default function BizManagerPOS() {
   const pausedCount = pcs.filter((p) => p.status === 'Paused').length;
   const availableCount = pcs.filter((p) => p.status === 'Available').length;
   const offlineCount = pcs.filter((p) => !isPcOnline(p, tick)).length;
+  const requestCount = pcs.filter((p) => !!p.sessionRequest).length;
   const previewPc = pcs.find((p) => p.id === previewPcId) || null;
+  const liveSelectedPc = selectedPcForStart ? pcs.find((p) => p.id === selectedPcForStart.id) || selectedPcForStart : null;
 
   if (loading) {
     return (
@@ -550,6 +604,11 @@ export default function BizManagerPOS() {
             <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-full bg-stone-300"></span> {availableCount} free</span>
             {offlineCount > 0 && (
               <span className="flex items-center gap-1 text-rose-600 font-semibold"><span className="w-2 h-2 rounded-full bg-rose-500 animate-pulse"></span> {offlineCount} offline</span>
+            )}
+            {requestCount > 0 && (
+              <span className="flex items-center gap-1 text-sky-600 font-semibold">
+                <span className="w-2 h-2 rounded-full bg-sky-500 animate-pulse"></span> {requestCount} request{requestCount > 1 ? 's' : ''} waiting
+              </span>
             )}
           </div>
         </div>
@@ -705,13 +764,19 @@ export default function BizManagerPOS() {
                     {!online && pc.sessionType && (
                       <div className="mb-2 text-[10px] font-bold text-rose-600 bg-rose-50 border border-rose-100 rounded-lg px-2.5 py-1.5 flex items-center gap-1.5">
                         <span className="w-1.5 h-1.5 rounded-full bg-rose-500 animate-pulse shrink-0"></span>
-                        Was mid-session when it dropped — go check on this PC
+                        Offline mid-session — auto-paused. Go check on this PC, or End it below.
                       </div>
                     )}
 
                     {pc.pendingCommand && (
                       <div className="mb-2 text-[10px] font-bold text-amber-600 bg-amber-50 border border-amber-100 rounded-lg px-2.5 py-1.5">
                         Sending {pc.pendingCommand}… waiting for PC to check in
+                      </div>
+                    )}
+
+                    {pc.status === 'Available' && pc.sessionRequest && (
+                      <div className="mb-2 text-[10px] font-bold text-sky-700 bg-sky-50 border border-sky-100 rounded-lg px-2.5 py-1.5">
+                        Customer requested {pc.sessionRequest === 'prepaid' ? 'Pay Now' : 'Pay Later'} — approve at the counter
                       </div>
                     )}
 
@@ -742,12 +807,43 @@ export default function BizManagerPOS() {
                       </div>
 
                       {pc.status === 'Available' ? (
-                        <button
-                          onClick={() => setSelectedPcForStart(pc)}
-                          className="text-sm bg-emerald-600 text-white px-5 py-2 rounded-xl transition hover:bg-emerald-700 font-semibold shadow-sm hover:shadow"
-                        >
-                          Start Session
-                        </button>
+                        !online ? (
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs font-bold text-stone-400 italic px-1">Waiting for PC to come online…</span>
+                            {pc.sessionRequest && (
+                              <button
+                                onClick={() => dismissRequest(pc)}
+                                title="Dismiss request"
+                                className="w-8 h-8 flex items-center justify-center rounded-full text-stone-400 hover:text-rose-600 hover:bg-rose-50 transition shrink-0"
+                              >
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                              </button>
+                            )}
+                          </div>
+                        ) : pc.sessionRequest ? (
+                          <div className="flex items-center gap-2">
+                            <button
+                              onClick={() => setSelectedPcForStart(pc)}
+                              className="text-sm bg-sky-600 text-white px-4 py-2 rounded-xl transition hover:bg-sky-700 font-semibold shadow-sm hover:shadow"
+                            >
+                              Approve {pc.sessionRequest === 'prepaid' ? 'Pay Now' : 'Pay Later'}
+                            </button>
+                            <button
+                              onClick={() => dismissRequest(pc)}
+                              title="Dismiss request"
+                              className="w-8 h-8 flex items-center justify-center rounded-full text-stone-400 hover:text-rose-600 hover:bg-rose-50 transition shrink-0"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M6 18L18 6M6 6l12 12"></path></svg>
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => setSelectedPcForStart(pc)}
+                            className="text-sm bg-emerald-600 text-white px-5 py-2 rounded-xl transition hover:bg-emerald-700 font-semibold shadow-sm hover:shadow"
+                          >
+                            Start Session
+                          </button>
+                        )
                       ) : (
                         <div className="flex gap-2 flex-wrap justify-end">
                           {isPrepaid && (
@@ -764,7 +860,14 @@ export default function BizManagerPOS() {
                               Pause
                             </button>
                           ) : (
-                            <button onClick={() => resumeSession(pc)} className="text-xs bg-emerald-100 border border-emerald-200 text-emerald-700 hover:bg-emerald-200 px-4 py-2 rounded-xl font-bold transition shadow-sm">
+                            <button
+                              onClick={() => resumeSession(pc)}
+                              disabled={!online}
+                              title={!online ? "Can't resume — PC is offline" : undefined}
+                              className={`text-xs px-4 py-2 rounded-xl font-bold transition shadow-sm border ${
+                                online ? 'bg-emerald-100 border-emerald-200 text-emerald-700 hover:bg-emerald-200' : 'bg-stone-100 border-stone-200 text-stone-400 cursor-not-allowed'
+                              }`}
+                            >
                               Resume
                             </button>
                           )}
@@ -868,17 +971,27 @@ export default function BizManagerPOS() {
       </main>
 
       {/* START SESSION MODAL */}
-      {selectedPcForStart && (
+      {liveSelectedPc && (
         <div className="fixed inset-0 bg-stone-900/40 backdrop-blur-sm flex items-center justify-center z-50 print:hidden p-4">
           <div className="bg-white p-6 sm:p-8 rounded-3xl shadow-2xl w-[400px] max-w-full border border-stone-100">
-            <h2 className="text-xl font-extrabold mb-6 text-stone-800 tracking-tight">Start {selectedPcForStart.name}</h2>
+            <h2 className="text-xl font-extrabold mb-6 text-stone-800 tracking-tight">Start {liveSelectedPc.name}</h2>
+
+            {!isPcOnline(liveSelectedPc, tick) && (
+              <div className="mb-4 text-xs font-bold text-rose-600 bg-rose-50 border border-rose-100 rounded-xl px-3 py-2.5">
+                This PC just went offline — starting is disabled until it reconnects.
+              </div>
+            )}
 
             <div className="mb-4 p-5 border border-stone-200 rounded-2xl bg-stone-50 hover:border-emerald-200 transition-colors">
               <h3 className="font-bold text-stone-800 mb-1">Pay Later</h3>
               <p className="text-xs text-stone-500 mb-4 font-medium leading-relaxed">
                 Open tab. First {ALLOWANCE_SEC / 60} mins free, then KES {RATE}/min.
               </p>
-              <button onClick={() => startSession(selectedPcForStart, 'postpaid')} className="w-full bg-white border border-emerald-200 text-emerald-700 py-2.5 rounded-xl font-bold hover:bg-emerald-50 transition shadow-sm">
+              <button
+                onClick={() => startSession(liveSelectedPc, 'postpaid')}
+                disabled={!isPcOnline(liveSelectedPc, tick)}
+                className="w-full bg-white border border-emerald-200 text-emerald-700 py-2.5 rounded-xl font-bold hover:bg-emerald-50 transition shadow-sm disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-white"
+              >
                 Start Open Session
               </button>
             </div>
@@ -895,8 +1008,8 @@ export default function BizManagerPOS() {
                   className="flex-1 bg-white border border-stone-200 p-2.5 rounded-xl focus:border-emerald-500 focus:ring-2 focus:ring-emerald-500/20 outline-none font-bold text-stone-800 shadow-sm transition-all"
                 />
                 <button
-                  onClick={() => startSession(selectedPcForStart, 'prepaid', Number(prepaidAmount))}
-                  disabled={!prepaidAmount || Number(prepaidAmount) <= 0}
+                  onClick={() => startSession(liveSelectedPc, 'prepaid', Number(prepaidAmount))}
+                  disabled={!prepaidAmount || Number(prepaidAmount) <= 0 || !isPcOnline(liveSelectedPc, tick)}
                   className="bg-emerald-600 text-white px-6 rounded-xl font-bold hover:bg-emerald-700 transition disabled:opacity-50 shadow-sm"
                 >
                   Start
